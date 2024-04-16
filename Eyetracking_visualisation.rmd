@@ -1,0 +1,686 @@
+---
+title: "Eyetracking"
+output: html_document
+date: "2023-11-06"
+---
+# Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(sp)
+library(stringr)
+install.packages("jpeg")
+install.packages("grid")
+library(jpeg,grid)
+
+setwd(".")
+```
+
+```{r}
+# get a nice font
+install.packages('extrafont')
+library(extrafont)
+font_import()
+loadfonts(device = "win")
+```
+
+# AOI Clean up
+```{r}
+aoi <- read.csv("AOI_MAGNIFISO.csv")
+aoi <- AOI_MAGNIFISO
+aoi$Points <- gsub(";;", ":", aoi$Points)
+aoi$Points <- gsub(";", ".", aoi$Points)
+aoi <- subset(aoi,select=-c(Timestamp..ms.,Is.active))
+aoi <- aoi[c(TRUE, FALSE), ]
+for (row in seq(1,nrow(aoi))) {
+  aoi$Task[row] <- strsplit(aoi$Group[row],"_")[[1]][3]
+  aoi$Stimuli[row] <- strsplit(aoi$Group[row],"\\.")[[1]][1]
+  print(paste0("completed ",row))
+}
+aoi <- subset(aoi, Task=="recog",select=AOI.Name:Stimuli)
+write.csv(aoi,"AOI.csv")
+```
+
+## Clean up participant dataframes
+```{r}
+#find all files #remove merge
+files <- list.files("Eye-tracking_data")
+
+coloumns_to_remove <- c("Combined Event Source", "SlideEvent","StimType","Duration","CollectionPhase","SourceStimuliName","MarkerDescription","SceneType","ET_PupilLeft","ET_PupilRight","ET_TimeSignal","ET_DistanceLeft","ET_DistanceRight","ET_CameraLeftX","ET_CameraLeftY","ET_CameraRightX","ET_CameraRightY","ET_Distance3D","ET_HeadRotationPitch","ET_HeadRotationYaw","ET_HeadRotationRoll","ET_GazeDirectionLeftQuality","ET_GazeDirectionRightQuality","ET_EyelidOpeningLeft","ET_EyelidOpeningLeftQuality","ET_EyelidOpeningRight","ET_EyelidOpeningRightQuality","ET_LeftPupilDiameterQuality","ET_RightPupilDiameterQuality","Event Group","Event Label","Event Text","Event Index","Gaze X","Gaze Y","Interpolated Gaze X","Interpolated Gaze Y","Interpolated Distance","Gaze Velocity","Gaze Acceleration","Fixation Index by Stimulus","Fixation Start","Fixation End","Fixation Dispersion","Saccade Index by Stimulus","Saccade Start","Saccade End","ET_GazeLeftx","ET_GazeLefty","ET_GazeRightx","ET_GazeRighty")
+
+for (file in files){
+  start_time <- Sys.time()
+  temp <- read.csv(paste0("Eye-tracking_data/",file))
+  #find name
+  ID_row <- which(temp[1] == "#Respondent Name")[1]
+  ID <- temp[ID_row,2]
+  
+  #find row with #Data
+  data_start_row <- which(temp[1] == "#DATA")[1]
+  next_row <- data_start_row+1
+  len <- nrow(temp)
+  # remove everything from start row  to #Data row
+  temp <- temp[next_row:len,]
+  # use next row as header
+  names(temp) <- temp[1,]
+  # remove next row
+  temp <- temp[-1,]
+  # remove coloumns called
+  temp <- temp[,!(names(temp) %in% coloumns_to_remove)]
+
+  #add a coloumn called ID with information from 2 coloumn 4 row
+  temp$ID <- ID
+  # add a task, trial index, stimuli coloumn
+  temp$Task <- NA
+  temp$Trial_index <- NA
+  temp$Stimuli <- NA
+  
+    #find relevant rows with imotions markers
+    trial_start <-which(temp$MarkerType=="S")
+    trial_end <- which(temp$MarkerType=="E")
+    rows_to_remove <- c(trial_start, trial_end)
+    recog=1
+    act=1
+    style=1
+    for (i in seq(1,length(trial_start))){
+        n_rows <- trial_end[i]-trial_start[i]
+        event_name <- temp$MarkerName[trial_start[i]]
+        task <- strsplit(event_name,"_")[[1]][3]
+        stimuli <- strsplit(event_name,"\\.")[[1]][1]
+
+        #add the same event_name to the the rows between trial_start and trial_end
+        temp$Task[trial_start[i]:trial_end[i]] <- task
+        
+        #add the same stimuli to the the rows between trial_start and trial_end
+        temp$Stimuli[trial_start[i]:trial_end[i]] <- stimuli
+        temp$MarkerName[trial_start[i]:trial_end[i]] <- event_name
+
+        #if the event_name is recog
+        #add the same trial_index to the the rows between trial_start and trial_end
+        if (task == "recog"){
+            temp$Trial_index[trial_start[i]:trial_end[i]] <- recog
+            recog <- recog+1
+        }
+        else if (task == "act"){
+            temp$Trial_index[trial_start[i]:trial_end[i]] <- act
+            act <- act+1
+        }
+        if (task == "style"){
+            temp$Trial_index[trial_start[i]:trial_end[i]] <- style
+            style <- style+1
+        }
+    }
+
+    #remove rows without a MarkerName
+    temp <- temp[!is.na(temp$Stimuli),]
+    temp <- temp[-rows_to_remove, ]
+    
+    # Split the file name by underscores
+    parts <- strsplit(file, "_")[[1]]
+
+    # Keep the last part after splitting
+    new_name <- tail(parts, 1)
+    new_path <- file.path(output_folder, new_name)
+    print(new_path)
+    
+    #save file to EOTP/ET-folder/Cleaning_up_dataframes/filename
+    write.csv(temp, paste0("Cleaning_up_dataframes/",new_name))
+    end_time <- Sys.time()
+    duration <- end_time-start_time
+    print(paste0("completed ",file, " in ", duration))
+}
+```
+
+## Specific for day 17 where bison 4 is misspelled
+```{r}
+files <- list.files("Cleaning_up_dataframes")
+#get only the files starting with 17
+files <- files[grep("^17", files)]
+
+for (file in files){
+    start_time <- Sys.time()
+    temp <- read.csv(paste0("Cleaning_up_dataframes/",file))
+    #in temp rename all occurences of bison_11 to bison_4
+    temp$Stimuli <- gsub("bison_11", "bison_4", temp$Stimuli)
+    temp$MarkerName <- gsub("bison_11", "bison_4", temp$MarkerName)
+    write.csv(temp,paste0("Cleaning_up_dataframes/",file))
+    end_time <- Sys.time()
+    print(paste0("Time to rename all occurences of bison_11 to bison_4 in ", file, ": ", end_time-start_time))
+}
+```
+
+## Cross referencing aoi dataframe with participant dataframes
+```{r}
+#find all files #remove merge
+files <- list.files("Cleaning_up_dataframes")
+
+coloumns_to_save <- c("X","Row","ID","Task","Trial_index","Stimuli","Timestamp","MarkerName","Fixation.Index","Fixation.X","Fixation.Y","Fixation.Duration","Saccade.Index","Saccade.Amplitude","Saccade.Peak.Velocity","Saccade.Peak.Acceleration","Saccade.Peak.Deceleration","Saccade.Direction")
+
+for (file in files){
+  start_time <- Sys.time()
+  temp <- read.csv(paste0("Cleaning_up_dataframes/",file))
+  
+  #check stimuli names
+  #print(paste0(file, " has stimuli according to aoi dataframe: ", sort(unique(temp$Stimuli))==sort(unique(aoi$Stimuli))))
+  #print(paste0(file, " has the same length of stimuli: ", length(unique(try$Stimuli))==length(unique(aoi$Stimuli))))
+
+  # remove rows where marker type is E and S
+  trial_start <-which(temp$MarkerType=="S")
+  trial_end <- which(temp$MarkerType=="E")
+  rows_to_remove <- c(trial_start, trial_end)
+  temp <- temp[-rows_to_remove, ]
+  # remove coloumns not in the list
+  temp <- subset(temp,select = names(temp) %in% coloumns_to_save)
+  
+  #add a coloumn for AOI
+  temp$AOI_hit <- NA
+  temp$Timestamp_start <- NA
+  temp$Timestamp_end <- NA
+  
+  #for each fixation check aoi
+  uni_fix <- unique(temp$Fixation.Index)
+  real_fix <- na.omit(uni_fix)
+  
+  for (fixation in real_fix){
+    
+    #for some reason this is empty
+    first_row_index <- which(temp$Fixation.Index==fixation)[1]
+    last_row_index <- which(temp$Fixation.Index==fixation)[length(which(temp$Fixation.Index==fixation))]
+
+ 
+    #save timestamp start adn end in one row
+    temp$Timestamp_start[first_row_index] <- temp$Timestamp[first_row_index]
+    temp$Timestamp_end[first_row_index] <- temp$Timestamp[last_row_index]
+    
+    #something goes wrong here
+
+    #get the stimulus
+    stimulus <- temp$Stimuli[first_row_index]
+    #get the fixation point
+    fix_x <- temp$Fixation.X[first_row_index]
+    fix_y <- temp$Fixation.Y[first_row_index]
+    
+    
+    #check if the fixation is within an AOI
+    aois <- filter(aoi, Stimuli == temp$Stimuli[first_row_index])
+
+    fixation_point <- c(fix_x, fix_y)
+    
+    #for all aoi's check if the fixation is within the aois
+    for (i in seq(1,nrow(aois))){ #virker ikke
+        #get the points of the aoi
+        string_points <- aois$Points[i]
+        split_string <- strsplit(string_points, ":")
+        number_of_points <- length(split_string[[1]])
+
+        #create a matrix with the points
+        points <- matrix(nrow = number_of_points/2+1, ncol = 2)
+        for (j in seq(1:number_of_points)){
+            #every other point is a x coordinate, the other is a y coordinate
+            if (j %% 2 == 0){
+                points[j/2,2] <- as.numeric(split_string[[1]][j])
+            } else {
+                points[(j+1)/2,1] <- as.numeric(split_string[[1]][j])
+            }
+        }
+        points[number_of_points/2+1,] <- points[1,]
+        
+        # Check if the point is inside the polygon
+        is_inside <- point.in.polygon(fixation_point[1], fixation_point[2], points[,1],points[,2])
+        #print(paste0("fix ",aois$AOI.Name[i], " is ", is_inside))
+
+        if (is_inside == 1){
+          temp$AOI_hit[first_row_index] <- aois$AOI.Name[i]
+        }else{
+          temp$AOI_hit[first_row_index] <- "NA"
+        }
+    }
+  }
+    #save file
+    write.csv(temp, paste0("AOI-updated-participant-dataframes/",file))
+    
+    #remove everything but filled rows for fixations
+    temp <- temp[!is.na(temp$Timestamp_end),]
+    temp <- subset(temp,select = -c(Saccade.Index:Saccade.Direction))
+    #bind to grand df
+    fixations_df <- rbind(fixations_df,temp)
+    
+    end_time <- Sys.time()
+    duration <- end_time-start_time
+    print(paste0("completed ",file, " in ", duration))
+}
+```
+
+## Combine to grand fixation df
+```{r}
+fixations_df <- data.frame()
+
+files <- list.files("AOI-updated-participant-dataframes")
+
+coloumns_to_save <- c("X","Row","ID","Task","Trial_index","Stimuli","MarkerName","Fixation.Index","Fixation.X","Fixation.Y","Fixation.Duration","AOI_hit","Timestamp_start","Timestamp_end")
+
+for (file in files){
+  start_time <- Sys.time()
+  temp <- read.csv(paste0("AOI-updated-participant-dataframes/",file))
+  
+  # remove coloumns not in the list
+  temp <- subset(temp,select = names(temp) %in% coloumns_to_save)
+  
+  #remove everything but filled rows for fixations
+  temp <- temp[!is.na(temp$Timestamp_end),]
+
+  #bind to grand df
+  fixations_df <- rbind(fixations_df,temp)
+    
+  end_time <- Sys.time()
+  duration <- end_time-start_time
+  print(paste0("completed ",file, " in ", duration))
+}
+
+write.csv(fixations_df,"collected_fixations_dataframe_GRANDIOSA.csv")
+```
+
+# Final cleaning
+```{r} 
+#load data first both fixations_df and AOI.csv
+for (row in seq(1, nrow(fixations_df))){
+    #get the stimulus
+    stimulus <- fixations_df$Stimuli[row]
+    #get the fixation point
+    fix_x <- fixations_df$Fixation.X[row]
+    fix_y <- fixations_df$Fixation.Y[row]
+    
+    
+    #check if the fixation is within an AOI
+    aois <- filter(aoi, Stimuli == stimulus)
+
+    fixation_point <- c(fix_x, fix_y)
+    
+    #for all aoi's check if the fixation is within the aois
+    for (i in seq(1,nrow(aois))){
+      print(paste0("current row is ", row, " of ", nrow(fixations_df)))
+        #get the points of the aoi
+        string_points <- aois$Points[i]
+        split_string <- strsplit(string_points, ":")
+        number_of_points <- length(split_string[[1]])
+
+        #create a matrix with the points
+        points <- matrix(nrow = number_of_points/2+1, ncol = 2)
+        for (j in seq(1:number_of_points)){
+            #every other point is a x coordinate, the other is a y coordinate
+            if (j %% 2 == 0){
+                points[j/2,2] <- as.numeric(split_string[[1]][j])
+            } else {
+                points[(j+1)/2,1] <- as.numeric(split_string[[1]][j])
+            }
+        }
+        points[number_of_points/2+1,] <- points[1,]
+
+        # Check if the point is inside the polygon
+        is_inside <- point.in.polygon(fixation_point[1], fixation_point[2], points[,1],points[,2])
+        print(is_inside)
+
+        if (is_inside == 1){
+          if (aois$AOI.Name[i]=="Torso"|aois$AOI.Name[i]=="Tail"){
+          fixations_df$AOI_hit[row] <- "Torso+Tail"
+          }else if (aois$AOI.Name[i]=="Head+neck"|aois$AOI.Name[i]=="Headdress"){
+            fixations_df$AOI_hit[row] <- "Head+Extensions"
+          }else if (aois$AOI.Name[i]=="Frontlegs"|aois$AOI.Name[i]=="Backlegs"){
+            fixations_df$AOI_hit[row] <- "Legs"
+          }
+          break
+        }else{
+          fixations_df$AOI_hit[row] <- "none"
+        }
+    }
+}
+
+fixations_df <- fixations_df[fixations_df$AOI_hit != "none",]
+
+write.csv(fixations_df,"fixations_MAGNIFISO.csv")
+```
+
+# Make model dataframes
+```{r}
+#load relevant dataframe
+fixations_df <- read.csv("fixations_MAGNIFISO.csv")
+#define dataframes
+
+first_visit <- subset(fixations_df,select = c(ID,Task, Trial_index,Stimuli, AOI_hit, Fixation.Index))
+
+dwell_por <- subset(fixations_df,select = c(ID,Task, Trial_index,Stimuli, AOI_hit, Fixation.Duration))
+
+fix_por <- first_visit
+```
+
+## Update DWELL%
+```{r}
+dwell_por$Dwell_TRIAL <- NA
+dwell_por$Dwell_por <- NA
+
+df_updated <- dwell_por%>%
+  group_by(ID, Task, Trial_index) %>%
+  mutate(Dwell_TRIAL = sum(Fixation.Duration)) %>%
+  ungroup()
+
+again <- df_updated %>% 
+  mutate(Dwell_por = Fixation.Duration/Dwell_TRIAL)
+
+#Index and factorise
+again$ID <- as.factor(again$ID)#levels 
+again$ID  <- as.numeric(again$ID)#assigning the level by overwriting the id.
+again$ID  <- as.factor(again$ID)
+
+again <- again %>%
+  mutate_all(~str_replace_all(., "\\+", ""))
+
+
+write.csv(again,"DWELL_PROPORTION.csv")
+```
+
+## Update fix%
+```{r}
+df_counts <- fix_por %>%
+  group_by(ID, Task, Trial_index) %>%
+  mutate(
+    No_fix = n(),
+    No_fix_torso = sum(AOI_hit == "Torso+Tail", na.rm = TRUE),
+    No_fix_head = sum(AOI_hit == "Head+Extensions", na.rm = TRUE),
+    No_fix_legs = sum(AOI_hit == "Legs", na.rm = TRUE),
+  )
+
+once <- df_counts %>% 
+    mutate(fix_por_torso = No_fix_torso/No_fix,
+    fix_por_head = No_fix_head/No_fix,
+    fix_por_legs =No_fix_legs/No_fix
+    )
+
+twice <- once %>% 
+  group_by(ID,Task,Trial_index) %>% 
+  slice(1)
+
+write.csv(twice,"FIXATION_PROPORTION.csv")
+
+```
+
+### Do an inspection of fixation durations
+```{r}
+df <- fixations_MAGNIFISO
+df$ID <- as.factor(df$ID)
+df$Task <- as.factor(df$Task)
+df$Trial_index <- as.factor(df$Trial_index)
+
+test <- fixations_MAGNIFISO %>% 
+  group_by(ID,Task,Trial_index) %>% 
+  slice(1)
+
+test %>%
+  ungroup() %>%
+  filter(Fixation.Duration>mean(Fixation.Duration)) %>% 
+  summarise(n())
+#39%
+
+test %>% 
+  ungroup() %>% 
+  filter(Fixation.Duration>200) %>% 
+  summarise(n())
+#63%
+```
+
+## Update first-hit
+```{r}
+first_hit <- first_visit %>%
+  mutate(First_visit=0)
+first_hit$rowno <- seq(1,nrow(first_hit))
+first_hit$AOI <- NA
+
+df_updated <- first_hit %>%
+  group_by(ID, Task, Trial_index) %>%
+  mutate(
+    First_visit = ifelse(Fixation.Index == min(Fixation.Index), 1, 0),
+    AOI = ifelse(Fixation.Index == min(Fixation.Index), AOI_hit, AOI)
+  ) %>%
+  ungroup()
+
+#make the dataframe nice
+first <- df_updated %>% 
+  filter(First_visit==1)
+new <- first
+
+availiable_aoi <- c("Torso+Tail","Head+Extensions","Legs")
+for (row in seq(1,nrow(first))){
+  line <- first[row,]
+  taken_aoi <- line$AOI
+  availiable_aoi <- availiable_aoi[availiable_aoi != taken_aoi]
+  line$First_visit=0
+  line$AOI=availiable_aoi[1]
+  new <- rbind(new,line)
+  line$AOI=availiable_aoi[2]
+  new <- rbind(new,line)
+  availiable_aoi <- c("Torso+Tail","Head+Extensions","Legs")
+
+}
+
+xtabs(~AOI+First_visit,new) #fixed
+
+new <- subset(new,select=c(ID,Task,Trial_index,Stimuli,AOI,First_visit))
+
+#Index and factorise
+new$ID <- as.factor(new$ID)#levels 
+new$ID  <- as.numeric(new$ID)#assigning the level by overwriting the id.
+new$ID  <- as.factor(new$ID)
+
+new <- new %>%
+  mutate_all(~str_replace_all(., "\\+", ""))
+
+write.csv(new,"FIRST_VISIT.csv")
+```
+
+# Calculate AOI sizes
+#AOI sizes
+```{r}
+#make DF for it
+aoi <- subset(AOI,select=c("Stimuli","AOI.Name","Color","Points"))
+#change color names
+aoi$Color <- gsub("#009BBB","#6E0955", aoi$Color)
+aoi$Color <- gsub("#D4A281","#009BBB", aoi$Color)
+aoi$Color <- gsub("#99366","#7E5738", aoi$Color)
+aoi$Color <- gsub("#E8CFAA","#009BBB", aoi$Color)
+aoi$Points[32] <- NA
+
+new_aoi <- data.frame()
+for (line in seq(1,nrow(aoi)) ){
+  points <- aoi$Points[line]
+  if (is.na(points)){
+        next
+      }else{
+  point <- strsplit(points, ":")
+  x <- c()
+  y <- c()
+  for (index in seq(1,length(point[[1]]))){
+          #for index that is odd, add to x vector
+          if (index %% 2 == 0){
+              y <- c(y,point[[1]][index])
+          } else {
+              x <- c(x, point[[1]][index])
+          }
+      }
+  len <- length(x)
+  new <- data.frame(stim = rep(aoi$Stimuli[line],len),
+                        AOI.Color = rep(aoi$Color[line],len), 
+                        AOI.Name = rep(aoi$AOI.Name[line],len),
+                        x = x,
+                        y = y)
+      #get the first row of the new dataframe
+  new <- rbind(new,new[1,])
+    #bind with the other dataframes
+  new_aoi <- rbind(new_aoi, new)
+      }
+}
+
+aoi$aoi <- 0
+for (line in seq(1,nrow(aoi))){
+  if (aoi$AOI.Name[line] =="Headdress"|aoi$AOI.Name[line] =="Head+neck"){
+    aoi$aoi[line] <- "head"
+  }else if (aoi$AOI.Name[line]=="Torso"|aoi$AOI.Name[line]=="Tail"){
+    aoi$aoi[line] <- "torso"
+  }else if (aoi$AOI.Name[line]=="Frontlegs"|aoi$AOI.Name[line]=="Backlegs"){
+    aoi$aoi[line] <- "legs"
+  }
+}
+
+# Install and load the sp and rgeos packages
+install.packages("splancs")
+library(splancs)
+
+new_aoi$x <- as.numeric(new_aoi$x)
+new_aoi$y <- as.numeric(new_aoi$y)
+aoi <- aoi %>% mutate(area=0)
+
+for (line in seq(1,nrow(aoi)) ){
+   if (is.na(aoi$Points[line])){
+        next
+      }else{
+  stim <- aoi$Stimuli[line]
+  ao <- aoi$AOI.Name[line]
+  c <- new_aoi[new_aoi$AOI.Name==ao,] 
+  c <- c[c$stim==stim,]
+  x <- c$x
+  y <- c$y
+  t <- cbind(x,y)
+  a <- splancs::areapl(t)
+  
+  aoi$area[line] <- a
+        } 
+}
+
+aoi$aoi <- as.factor(aoi$aoi)
+c <- aoi %>% 
+  group_by(Stimuli,aoi) %>% 
+  summarise(sum(area))
+
+c$prop_torso <- 0
+
+for (animal in unique(aoi$Stimuli)){
+  ha <- c$`sum(area)`[c$Stimuli==animal&c$aoi=="head"]
+  ta <- c$`sum(area)`[c$Stimuli==animal&c$aoi=="torso"]
+  la <- c$`sum(area)`[c$Stimuli==animal&c$aoi=="legs"]
+  ht <- ((ha-ta)/ta)*100
+  lt <- ((la-ta)/ta)*100
+  c$prop_torso[c$aoi=="head"&c$Stimuli==animal] <- ht
+  c$prop_torso[c$aoi=="legs"&c$Stimuli==animal] <- lt
+}
+
+c %>% 
+  group_by(aoi) %>% 
+  summarise(mean(prop_torso))
+```
+
+# Heat maps
+## Load data
+```{r}
+aoi <- read.csv("AOI_MAGNIFISO.csv") #clean as in AOI clean up
+
+#change color names
+aoi$Color <- gsub("#009BBB","#6E0955", aoi$Color)
+aoi$Color <- gsub("#D4A281","#009BBB", aoi$Color)
+aoi$Color <- gsub("#99366","#7E5738", aoi$Color)
+aoi$Color <- gsub("#E8CFAA","#009BBB", aoi$Color)
+```
+
+## Define colours
+```{r}
+heat_colors <- colorRampPalette(
+  c(
+    "#00007F",
+    "blue",
+    "#007FFF",
+    "cyan",
+    "#7FFF7F",
+    "yellow",
+    "#FF7F00",
+    "red",
+    "#7F0000"
+  )
+)
+
+aoi_colors <- c( 
+                      "TorsoTail"= "#009BBB",
+                      "HeadExtension"= "#6E0955",
+                      "Legs"= "#7E5738"
+                      )
+```
+
+## Define size of images:
+```{r}
+img_size <- read.csv("img_size.csv")
+img_size$stim <- gsub(".jpg","",img_size$stim)
+img_size$stim <- gsub("11","4",img_size$stim)
+write.csv(img_size,"img_size.csv")
+```
+
+## Heatmap function
+```{r}
+img_size <- read.csv("img_size.csv")
+df <- read.csv("fixations_MAGNIFISO.csv")
+d <- subset(df,select=c("ID","Task","Trial_index","Stimuli","AOI_hit","Fixation.Index","Fixation.X","Fixation.Y"))
+d$Task <- gsub("style", "Aesthetic", d$Task)
+d$Task <- gsub("act", "Movement", d$Task)
+d$Task <- gsub("recog", "Species", d$Task)
+d$AOI_hit <- gsub("\\+","",d$AOI_hit)
+
+make_heatmap <- function(participant, stimulus,task){
+  #find relevant data
+  hov<- d[d$ID == participant & d$Stimuli == stimulus & d$Task==task,]
+  trials = unique(hov$Trial_index)
+  z <- hov[hov$Trial_index==trials[-1],]
+    
+  #import the image corresponding to the trial
+  img <- jpeg::readJPEG(paste0('experiment_images/out/', z$Stimuli[1],".jpg")) 
+  img <- grid::rasterGrob(img, width=unit(1, "npc"), height = unit(1,"npc"), interpolate = FALSE)
+  
+  stimulus <- z$Stimuli[1]
+      
+    #make coordinates
+    ## the screen was 1920x1080 (XxY)
+    ## the image was centered
+    ymx <- (1080-img_size$ypix[img_size$stim==stimulus])/2+img_size$ypix[img_size$stim==stimulus]
+    xmx <- (1920-img_size$xpix[img_size$stim==stimulus])/2+img_size$xpix[img_size$stim==stimulus]
+    ym <- (1080-img_size$ypix[img_size$stim==stimulus])/2
+    xm <- (1920-img_size$xpix[img_size$stim==stimulus])/2
+    
+    #flip y-axis
+    z$Fixation.Y <- 1080 - z$Fixation.Y
+    
+    #make plot
+    p <- ggplot(z, aes(Fixation.X, Fixation.Y, color = Fixation.Index)) + 
+        annotation_custom(img, xmin = xm, xmax = xmx, ymin = ym, ymax = ymx) +
+        #annotate(geom = "rect", xmin = 0, xmax = 1920, ymin = 0, ymax = 1080, colour = "#D4A281", fill="white",alpha = 0.0) +
+        stat_density2d(geom = "raster", aes(fill = ..density.., alpha = sqrt(sqrt(..density..))), contour = FALSE, n = 1000) + 
+    scale_fill_gradientn(colours = heat_colors(10), trans="sqrt") +
+    scale_alpha(range = c(0.1, 0.6)) +
+    xlim(xmin = 0, xmax = 1920) +ylim(ymin = 0, ymax = 1080) +
+        labs(title=NULL,x=NULL,y=NULL)+#=paste0("ID ", participant, " in the ",task," task")
+    theme(text=element_text(family="Cambria"))+
+      theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank())+
+      theme(legend.position = "none")+
+      theme(axis.text.x=element_blank(), 
+      axis.ticks.x=element_blank(), 
+      axis.text.y=element_blank(), 
+      axis.ticks.y=element_blank())+
+      guides(fill = guide_legend(override.aes = list(title = NULL))) +
+    guides(alpha = guide_legend(override.aes = list(title = NULL)))
+
+    print(p)
+    ggsave(paste0(participant,"_",task,"_",stimulus,".jpg"),width = 16, height = 9, units = "in")
+}
+```
+
+## Draw heatmaps example
+```{r}
+for (ID in unique(d$ID)){
+  make_heatmap(ID,"bison_10","Aesthetic")
+}
+```
