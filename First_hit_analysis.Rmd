@@ -1,0 +1,278 @@
+---
+title: "first_hit"
+author: "SKK"
+date: "2023-12-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+```{r}
+install.packages("pacman")
+pacman::p_load(tidyverse, rlang, tidymodels, gridExtra, brms, cmdstanr, loo)
+setwd('.')
+```
+
+# Load font
+```{r}
+install.packages('extrafont')
+library(extrafont)
+font_import(pattern="Cambria")
+loadfonts(device = "win")
+```
+
+
+# Load data
+```{r}
+fh_df <- read.csv("FIRST_VISIT.csv")
+fh_df <- fh_df %>% 
+  rename(First_hit=First_visit) %>% 
+  rename(Trial=Trial_index) %>% 
+  rename(Participant=ID)
+
+fh_df$Task <- as.factor(fh_df$Task)#levels 
+fh_df$Task  <- as.numeric(fh_df$Task)#assigning the level by overwriting the id.
+fh_df$Task  <- as.factor(fh_df$Task)
+
+fh_df$AOI <- as.factor(fh_df$AOI)#levels 
+fh_df$AOI <- as.numeric(fh_df$AOI)#assigning the level by overwriting the id.
+fh_df$AOI  <- as.factor(fh_df$AOI)
+
+
+#classificaion problem
+first <- fh_df %>% 
+  filter(First_hit==1)
+first <- subset(first,select=c("Participant","Task","AOI"))
+```
+
+
+# Clean up
+```{r}
+df <- read.csv("fixations_MAGNIFISO.csv")
+df$ID <- as.factor(df$ID)
+df$ID <- as.numeric(df$ID)
+df$ID <- as.factor(df$ID)
+write.csv(df,"fixations_MAGNIFISO.csv")
+```
+
+```{r}
+df <- df %>% 
+  rename(AOI=AOI_hit)
+result <- df %>%
+  group_by(ID, Task, Trial_index) %>%
+  mutate(first_row = row_number() == 1,
+         change_in_AOI = AOI != lag(AOI, default = first(AOI))) %>%
+  filter(first_row | change_in_AOI) %>%
+  select(-first_row, -change_in_AOI)
+
+# Print or view the result
+print(result)
+
+```
+
+# Dataframe for the second FIRST HIT
+```{r}
+d <- subset(df,select=c("ID","Task","Trial_index","Stimuli","AOI_hit","Fixation.Duration"))
+
+#making dataframe for fixation number 2
+second <- d %>% 
+  group_by(ID,Task,Trial_index) %>% 
+  slice(2)
+
+second <- second %>% 
+  rename(AOI=AOI_hit)
+
+second$AOI <- gsub("\\+.*","",second$AOI)
+second$Task <- gsub("style", "Aesthetic", second$Task)
+second$Task <- gsub("act", "Movement", second$Task)
+second$Task <- gsub("recog", "Species", second$Task)
+
+
+second$first_visit <- 1
+legs <- second
+legs$first_visit <- 0
+for (line in seq(1,nrow(legs))){
+  if (legs$AOI[line]=="Head"){
+    legs$AOI[line] <- "Legs"
+  }else if (legs$AOI[line]=="Legs"){
+    legs$AOI[line] <- "Torso"
+  }else if (legs$AOI[line]=="Torso"){
+    legs$AOI[line] <- "Head"
+  }
+}
+head <- second
+head$first_visit <- 0
+for (line in seq(1,nrow(head))){
+  if (head$AOI[line]=="Head"){
+    head$AOI[line] <- "Torso"
+  }else if (head$AOI[line]=="Legs"){
+    head$AOI[line] <- "Head"
+  }else if (head$AOI[line]=="Torso"){
+    head$AOI[line] <- "Legs"
+  }
+}
+
+s <- rbind(head,legs)
+se <- rbind(second,s)
+#the real stuff
+se$Task <- as.factor(se$Task)
+se$AOI <- as.factor(se$AOI)
+```
+
+# Modelling with BRMS
+```{r}
+library(brms)
+
+formula <- first_visit ~ 0 + Task +Task:AOI
+```
+
+## Repeat
+The following steps are repeating to set different reference levels.
+```{r}
+#3 has the head as reference, 4 legs, 5 torso
+se$AOI <- relevel(se$AOI,ref="Head")
+```
+
+```{r}
+#find the priors
+get_prior(formula = formula,data=se,family=bernoulli(link="logit"))
+#set uninformative priors
+ber_prior3 <- c(prior(normal(0,1),class="b",coef="TaskAesthetic"),
+               prior(normal(0,1),class="b",coef="TaskMovement"),
+               prior(normal(0,1),class="b",coef="TaskSpecies"),
+               prior(normal(0,1),class="b",coef="TaskSpecies:AOILegs"),
+               prior(normal(0,1),class="b",coef="TaskAesthetic:AOILegs"),
+              prior(normal(0,1),class="b",coef="TaskSpecies:AOITorso"),
+              prior(normal(0,1),class="b",coef="TaskAesthetic:AOITorso"),
+              prior(normal(0,1),class="b",coef="TaskMovement:AOITorso"),
+              prior(normal(0,1),class="b",coef="TaskMovement:AOILegs")
+               )
+```
+
+
+```{r}
+#3 has the head as reference, 4 legs, 5 torso
+se$AOI <- relevel(se$AOI,ref="Legs")
+
+ber_prior4 <- c(prior(normal(0,1),class="b",coef="TaskMovement"),
+               prior(normal(0,1),class="b",coef="TaskSpecies"),
+               prior(normal(0,1),class="b",coef="TaskAesthetic"),
+               prior(normal(0,1),class="b",coef="TaskSpecies:AOIHead"),
+               prior(normal(0,1),class="b",coef="TaskAesthetic:AOIHead"),
+              prior(normal(0,1),class="b",coef="TaskSpecies:AOITorso"),
+              prior(normal(0,1),class="b",coef="TaskAesthetic:AOITorso"),
+              prior(normal(0,1),class="b",coef="TaskMovement:AOITorso"),
+              prior(normal(0,1),class="b",coef="TaskMovement:AOIHead")
+               )
+```
+
+
+```{r}
+#3 has the head as reference, 4 legs, 5 torso
+se$AOI <- relevel(se$AOI,ref="Torso")
+
+ber_prior5 <- c(prior(normal(0,1),class="b",coef="TaskMovement"),
+               prior(normal(0,1),class="b",coef="TaskSpecies"),
+               prior(normal(0,1),class="b",coef="TaskAesthetic"),
+               prior(normal(0,1),class="b",coef="TaskSpecies:AOIHead"),
+               prior(normal(0,1),class="b",coef="TaskAesthetic:AOIHead"),
+              prior(normal(0,1),class="b",coef="TaskSpecies:AOILegs"),
+              prior(normal(0,1),class="b",coef="TaskAesthetic:AOILegs"),
+              prior(normal(0,1),class="b",coef="TaskMovement:AOILegs"),
+              prior(normal(0,1),class="b",coef="TaskMovement:AOIHead")
+               )
+```
+
+Run this with the different priors
+```{r}
+#fit priors
+head_prior <- brm(formula = formula,  
+                   data=se, 
+                   prior = ber_prior3,
+                   family = bernoulli(link = "logit"),
+                   warmup = 500, 
+                   iter = 2000, 
+                   chains = 2, 
+                   inits= "0",
+           file = "prior_3",
+                   cores=2,
+                   seed = 123)
+#check 'em
+pp_check(head_prior,ndraws=100) #looks good?
+```
+
+
+```{r}
+#fit posterior model
+head <- brm(formula = formula,  
+                   data=se, 
+                   prior = ber_prior3,
+                  sample_prior = T, #THIS IS WHAT MAKES IT POSTERIOR
+                   family = bernoulli(link = "logit"),
+                   warmup = 2000, 
+                   iter = 4000, 
+                   chains = 2, 
+                   inits= "0", 
+          file = "posterior_3",
+                   cores=2,
+                   seed = 123)
+#check tha'
+pp_check(head_pos,ndraws=100) #looks good?
+```
+
+Again repeat the summary statement to find what the estimates are called
+```{r}
+#get estimates
+summary(head_pos)
+
+
+#do hypothesis testing
+#head
+hypothesis(head,"TaskSpecies > (TaskMovement+TaskAesthetic)/2")
+hypothesis(head,"TaskMovement:AOILegs > TaskMovement:AOITorso")
+hypothesis(head,"TaskAesthetic:AOITorso = TaskAesthetic:AOILegs")
+#legs
+hypothesis(legs,"TaskMovement > (TaskSpecies+TaskAesthetic)/2")
+hypothesis(legs,"TaskSpecies:AOIHead > TaskSpecies:AOITorso")
+hypothesis(legs,"TaskAesthetic:AOIHead = TaskAesthetic:AOITorso")
+#torso
+hypothesis(torso,"TaskMovement:AOILegs > TaskMovement:AOIHead")
+hypothesis(torso,"TaskSpecies:AOIHead > TaskSpecies:AOILegs")
+hypothesis(torso,"TaskAesthetic:AOILegs = TaskAesthetic:AOIHead")
+```
+
+# Make boxplot
+```{r}
+#prepare to plot
+se1 <- second %>%
+  group_by(Trial_index,Task,AOI) %>% 
+  mutate(count=n()) %>% 
+  distinct(AOI, .keep_all = TRUE) %>% 
+  ungroup()
+se1$AOI <- gsub("TorsoTail", "Torso", se1$AOI)
+se1$AOI <- gsub("HeadExtensions", "Head", se1$AOI)
+se1$Task <- gsub("style", "Aesthetic", se1$Task)
+se1$Task <- gsub("act", "Movement", se1$Task)
+se1$Task <- gsub("recog", "Species", se1$Task)
+```
+
+```{r}
+#plot it
+p_fix <- ggplot(se1, aes(x = Task, y = count, fill = AOI)) +
+  geom_boxplot() +
+  ggtitle("First hit") +
+  xlab("Task") +
+  ylab("Proportion") +
+  theme_bw() + 
+  theme(text = element_text(family = "Cambria")) +
+  scale_fill_manual(values=c(Head = "#009BBB", Legs = "#7E5738", Torso = "#6E0955")) +
+  theme(text = element_text(size = 16), axis.text=element_text(size=12),
+        plot.title=element_text(size=20,face="bold"))
+p_fix <- p_fix + stat_summary(fun.y=mean,  geom="point", size=2,color="white", position = position_dodge(width = 0.75))
+p_fix
+
+ggsave("first_box.jpg", p_fix,  width = 10, height = 6, dpi = 300)
+```
