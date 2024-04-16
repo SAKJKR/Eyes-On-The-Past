@@ -22,15 +22,15 @@ in here you will find:
 
 
 And the helping documents including [iMotions](https://imotions.com/) eye-tracking extension:
-  - [iMotions API](https://github.com/SAKJKR/Eyes-On-The-Past/imotion.py)
-  - [Text scripts](https://github.com/SAKJKR/Eyes-On-The-Past/text.py)
-  - [experiment images](https://github.com/SAKJKR/Eyes-On-The-Past/experiment_images)
-  - [CSV file with image information](https://github.com/SAKJKR/Eyes-On-The-Past/img.size.csv)
+  - [iMotions API](https://github.com/SAKJKR/Eyes-On-The-Past/script/imotion.py)
+  - [Text scripts](https://github.com/SAKJKR/Eyes-On-The-Past/script/text.py)
+  - [experiment images](https://github.com/SAKJKR/Eyes-On-The-Past/images)
+  - [CSV file with image information](https://github.com/SAKJKR/Eyes-On-The-Past/images/img.size.csv)
 
 Additionally analysis scripts for R:
-- [Behavioural analysis](https://github.com/SAKJKR/Eyes-On-The-Past/Behavioural_analysis.Rmd)
-- [Initial eye-tracking analysis](https://github.com/SAKJKR/Eyes-On-The-Past/Eyetracking_visualition.Rmd)
-- [Analysis of first hit](https://github.com/SAKJKR/Eyes-On-The-Past/First_hit_analysis.Rmd)
+- [Behavioural analysis](https://github.com/SAKJKR/Eyes-On-The-Past/analysis/Behavioural_analysis.Rmd)
+- [Initial eye-tracking analysis](https://github.com/SAKJKR/Eyes-On-The-Past/analysis/Eyetracking_visualition.Rmd)
+- [Analysis of first hit](https://github.com/SAKJKR/Eyes-On-The-Past/analysis/First_hit_analysis.Rmd)
 
 
 Let is serve as a demo for proportion of fixation and dwell time
